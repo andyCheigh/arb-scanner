@@ -66,13 +66,14 @@ python main.py
 |---|---|---|
 | `MIN_PROFIT_PCT` | `1.0` | raise to 2.0 to cut "blink-and-miss" alerts |
 | `BANKROLL_USD` | `1000` | stake-allocation reference; you scale on execution |
-| `SPORTS` | NFL, NBA, MLB, NHL, UFC, EPL | comma-separated `the-odds-api` sport keys |
+| `SPORTS` | NFL, NBA, MLB, NHL, EPL | comma-separated `the-odds-api` sport keys |
 | `BOOKS` | DK, FD, BetMGM, Caesars, BetRivers, ESPN, William Hill, Pinnacle | bookmaker keys |
 
-Default scan cadence is **4×/day** (9am / 1pm / 5pm / 9pm Pacific).
-With 6 sports × 4 scans = 24 reqs/day = ~720/month → **just over** the
-free tier. Trim to 4 sports OR drop a scan slot if you blow through the
-quota. The bot warns you when `quota_remaining ≤ 50`.
+Default scan cadence is **6×/day** (every 4 hours: 3a/7a/11a/3p/7p/11p PT).
+With 5 sports × 6 scans = 30 reqs/day = ~900/month — fits inside the
+**1000/month** budget you get from running two free-tier keys
+(`ODDS_API_KEY` + `ODDS_API_KEY_2`, round-robined automatically).
+The bot warns you when any single key drops to ≤50 remaining.
 
 ## Deploy to a Linux box
 

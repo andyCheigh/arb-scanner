@@ -55,23 +55,29 @@ def _parse_dt(raw: str | None) -> datetime | None:
 
 
 def fetch_odds(
-    api_key: str,
+    api_keys: Iterable[str],
     sports: Iterable[str],
     books: Iterable[str],
     markets: tuple[str, ...] = ("h2h", "spreads", "totals"),
 ) -> tuple[list[Event], dict[str, int]]:
     """Pull odds for each sport. Returns (events, quota_info).
 
-    quota_info has 'remaining' and 'used' counts read from response headers,
-    so we can warn when the monthly free-tier budget is running out.
+    api_keys is a list — we round-robin across them per sport so the load
+    is shared and one exhausted key doesn't kill the whole scan. quota
+    'remaining' returned is the MIN across keys (most pessimistic).
     """
+    keys = list(api_keys)
+    if not keys:
+        raise ValueError("no api_keys provided")
+
     bookmakers_csv = ",".join(books)
     markets_csv = ",".join(markets)
 
     all_events: list[Event] = []
-    quota = {"remaining": -1, "used": -1}
+    per_key_remaining: dict[str, int] = {}
 
-    for sport in sports:
+    for i, sport in enumerate(sports):
+        api_key = keys[i % len(keys)]
         url = f"{BASE_URL}/sports/{sport}/odds"
         params = {
             "apiKey": api_key,
@@ -87,17 +93,17 @@ def fetch_odds(
                 continue
             resp.raise_for_status()
         except requests.RequestException as e:
-            logger.error(f"Odds fetch failed for {sport}: {e}")
+            logger.error(f"Odds fetch failed for {sport} (key #{(i % len(keys)) + 1}): {e}")
             continue
 
         try:
-            quota["remaining"] = int(resp.headers.get("x-requests-remaining", -1))
-            quota["used"] = int(resp.headers.get("x-requests-used", -1))
+            per_key_remaining[api_key] = int(resp.headers.get("x-requests-remaining", -1))
         except (TypeError, ValueError):
             pass
 
         events = resp.json()
-        logger.info(f"{sport}: {len(events)} events (quota left: {quota['remaining']})")
+        key_label = f"key#{(i % len(keys)) + 1}"
+        logger.info(f"{sport} [{key_label}]: {len(events)} events (key left: {per_key_remaining.get(api_key, '?')})")
 
         for ev in events:
             commence = _parse_dt(ev.get("commence_time"))
@@ -144,4 +150,9 @@ def fetch_odds(
                 )
             )
 
+    quota = {
+        "remaining": min(per_key_remaining.values()) if per_key_remaining else -1,
+        "total_remaining": sum(per_key_remaining.values()) if per_key_remaining else -1,
+        "keys_used": len(per_key_remaining),
+    }
     return all_events, quota

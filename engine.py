@@ -29,11 +29,14 @@ class Engine:
     async def run_scan(self):
         logger.info("Scan starting")
         events, quota = fetch_odds(
-            self.config.odds_api_key,
+            self.config.odds_api_keys,
             self.config.sports,
             self.config.books,
         )
-        logger.info(f"Fetched {len(events)} events; quota remaining {quota['remaining']}")
+        logger.info(
+            f"Fetched {len(events)} events; "
+            f"min key remaining: {quota['remaining']} ({quota.get('total_remaining', '?')} total across {quota.get('keys_used', 1)} key(s))"
+        )
 
         arbs = find_arbs(events, self.config.bankroll_usd, self.config.min_profit_pct)
         logger.info(f"Found {len(arbs)} arbs ≥ {self.config.min_profit_pct}%")
@@ -41,7 +44,7 @@ class Engine:
         new_arbs = [a for a in arbs if not self.state.is_seen(a.signature())]
         logger.info(f"{len(new_arbs)} new (not previously alerted)")
 
-        await self.notifier.send_digest(new_arbs, scanned_events=len(events), quota_remaining=quota["remaining"])
+        await self.notifier.send_digest(new_arbs, scanned_events=len(events), quota_remaining=quota.get("total_remaining", quota["remaining"]))
 
         for a in new_arbs:
             self.state.mark_seen(a.signature(), a.profit_pct)
@@ -49,9 +52,9 @@ class Engine:
         # Prune signatures older than 14 days
         self.state.prune_older_than(datetime.now(timezone.utc) - timedelta(days=14))
 
-        # Warn if quota is dangerously low
+        # Warn if any single key is dangerously low (we lose round-robin headroom)
         if 0 <= quota["remaining"] <= 50:
-            await self.notifier._send(f"⚠️ Odds API quota low: {quota['remaining']} requests left this month")
+            await self.notifier._send(f"⚠️ Odds API quota low on at least one key: min {quota['remaining']} left this month")
 
     def schedule(self):
         for hour in self.config.scan_hours_pt:

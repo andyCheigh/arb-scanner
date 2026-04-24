@@ -31,6 +31,7 @@ async def run():
     engine = Engine(cfg)
 
     await engine.notifier.send_startup(cfg.sports, cfg.books, cfg.min_profit_pct, cfg.bankroll_usd)
+    log.info(f"Loaded {len(cfg.odds_api_keys)} Odds API key(s); scans at PT hours {cfg.scan_hours_pt}")
     await engine.run_scan()
 
     engine.schedule()
