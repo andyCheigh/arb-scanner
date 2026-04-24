@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import logging
 
+import pytz
 from telegram import Bot
 
 from arb_finder import Arb, american_from_decimal
 
 logger = logging.getLogger(__name__)
+PACIFIC = pytz.timezone("America/Los_Angeles")
+
+
+def _to_pt(dt):
+    """Convert a tz-aware datetime to Pacific."""
+    return dt.astimezone(PACIFIC) if dt is not None else None
 
 
 class TelegramNotifier:
@@ -28,7 +35,7 @@ class TelegramNotifier:
     def _format_arb(arb: Arb) -> str:
         ev = arb.event
         market_label = {"h2h": "Moneyline", "spreads": "Spread", "totals": "Total"}.get(arb.market_key, arb.market_key)
-        commence = ev.commence_time.strftime("%a %b %d %I:%M%p UTC")
+        commence = _to_pt(ev.commence_time).strftime("%a %b %d %I:%M%p PT")
 
         lines = [
             f"💰 ARB {arb.profit_pct:.2f}% — {ev.sport_title} {market_label}",
@@ -52,7 +59,7 @@ class TelegramNotifier:
         if arb.legs[0].book_title:
             updates = sorted({m.last_update for m in ev.markets if m.last_update}, reverse=True)
             if updates:
-                lines.append(f"Lines pulled: {updates[0].strftime('%I:%M%p UTC')} — go fast")
+                lines.append(f"Lines pulled: {_to_pt(updates[0]).strftime('%I:%M%p PT')} — go fast")
         return "\n".join(lines)
 
     async def send_arb(self, arb: Arb):
@@ -69,13 +76,23 @@ class TelegramNotifier:
         body = "\n\n".join(self._format_arb(a) for a in arbs)
         await self._send(f"{header}\n\n{body}")
 
-    async def send_startup(self, sports: tuple[str, ...], books: tuple[str, ...], min_profit: float, bankroll: float):
+    async def send_startup(
+        self,
+        sports: tuple[str, ...],
+        books: tuple[str, ...],
+        min_profit: float,
+        bankroll: float,
+        scan_times_pt: list[tuple[int, int]],
+        keys_count: int,
+    ):
+        times = ", ".join(f"{h:02d}:{m:02d}" for h, m in scan_times_pt)
         msg = (
             f"ARB SCANNER STARTED\n\n"
             f"Sports ({len(sports)}): {', '.join(sports)}\n"
             f"Books ({len(books)}): {', '.join(books)}\n"
             f"Min profit alert: {min_profit:.2f}%\n"
             f"Stake reference: ${bankroll:.0f}\n"
-            f"Scan: 4×/day (9a/1p/5p/9p PT)"
+            f"Odds API keys: {keys_count}\n"
+            f"Scans (PT): {times}"
         )
         await self._send(msg)

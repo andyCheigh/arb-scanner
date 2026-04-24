@@ -20,11 +20,28 @@ class Config:
     sports: tuple[str, ...]
     books: tuple[str, ...]
 
-    # Scan cron (Pacific). Default: every 4 hours = 6×/day
-    scan_hours_pt: tuple[int, ...] = (3, 7, 11, 15, 19, 23)
+    # Scan window in Pacific. Default: 6 scans evenly between 9am and 11pm.
+    scan_window_start_hour: int = 9
+    scan_window_end_hour: int = 23
+    scan_count: int = 6
 
     # State file for dedup
     state_path: str = "state/seen_arbs.json"
+
+    @property
+    def scan_times_pt(self) -> list[tuple[int, int]]:
+        """Return [(hour, minute)] evenly spaced across the scan window."""
+        if self.scan_count <= 1:
+            return [(self.scan_window_start_hour, 0)]
+        total_minutes = (self.scan_window_end_hour - self.scan_window_start_hour) * 60
+        step = total_minutes / (self.scan_count - 1)
+        out: list[tuple[int, int]] = []
+        for i in range(self.scan_count):
+            offset = round(i * step)
+            h = self.scan_window_start_hour + offset // 60
+            m = offset % 60
+            out.append((h, m))
+        return out
 
 
 def _csv(env_key: str, default: str) -> tuple[str, ...]:
@@ -63,4 +80,7 @@ def load() -> Config:
             "BOOKS",
             "draftkings,fanduel,betmgm,caesars,betrivers,espnbet,williamhill_us,pinnacle",
         ),
+        scan_window_start_hour=int(os.getenv("SCAN_WINDOW_START_HOUR", "9")),
+        scan_window_end_hour=int(os.getenv("SCAN_WINDOW_END_HOUR", "23")),
+        scan_count=int(os.getenv("SCAN_COUNT", "6")),
     )

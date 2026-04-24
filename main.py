@@ -2,6 +2,17 @@
 
 from __future__ import annotations
 
+# Force the process timezone to Pacific BEFORE importing logging-related modules,
+# so log timestamps are PT regardless of the host (Mac local vs Linux UTC devbox).
+import os
+import time as _time
+
+os.environ["TZ"] = "America/Los_Angeles"
+try:
+    _time.tzset()  # Unix only (macOS, Linux). Windows ignores; not a target.
+except AttributeError:
+    pass
+
 import asyncio
 import logging
 import sys
@@ -30,8 +41,16 @@ async def run():
     cfg = config.load()
     engine = Engine(cfg)
 
-    await engine.notifier.send_startup(cfg.sports, cfg.books, cfg.min_profit_pct, cfg.bankroll_usd)
-    log.info(f"Loaded {len(cfg.odds_api_keys)} Odds API key(s); scans at PT hours {cfg.scan_hours_pt}")
+    await engine.notifier.send_startup(
+        cfg.sports,
+        cfg.books,
+        cfg.min_profit_pct,
+        cfg.bankroll_usd,
+        cfg.scan_times_pt,
+        len(cfg.odds_api_keys),
+    )
+    times = ", ".join(f"{h:02d}:{m:02d}" for h, m in cfg.scan_times_pt)
+    log.info(f"Loaded {len(cfg.odds_api_keys)} Odds API key(s); scans at PT times: {times}")
     await engine.run_scan()
 
     engine.schedule()

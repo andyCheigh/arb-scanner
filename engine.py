@@ -57,14 +57,15 @@ class Engine:
             await self.notifier._send(f"⚠️ Odds API quota low on at least one key: min {quota['remaining']} left this month")
 
     def schedule(self):
-        for hour in self.config.scan_hours_pt:
+        for hour, minute in self.config.scan_times_pt:
             self.scheduler.add_job(
                 self.run_scan,
-                trigger=CronTrigger(hour=hour, minute=0, timezone=PACIFIC),
-                id=f"scan_{hour}",
+                trigger=CronTrigger(hour=hour, minute=minute, timezone=PACIFIC),
+                id=f"scan_{hour:02d}{minute:02d}",
                 replace_existing=True,
             )
-        logger.info(f"Scans scheduled at PT hours: {self.config.scan_hours_pt}")
+        formatted = ", ".join(f"{h:02d}:{m:02d}" for h, m in self.config.scan_times_pt)
+        logger.info(f"Scans scheduled (PT): {formatted}")
 
     def start(self):
         self.scheduler.start()
