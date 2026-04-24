@@ -113,57 +113,113 @@ def _find_h2h_arbs(event: Event, bankroll: float, min_profit_pct: float) -> list
     return [Arb(event=event, market_key="h2h", legs=legs, profit_pct=profit_pct, profit_usd=profit, total_stake=bankroll)]
 
 
-def _find_line_market_arbs(
-    event: Event,
-    market_key: str,
-    bankroll: float,
-    min_profit_pct: float,
-) -> list[Arb]:
-    """Spreads or totals: must compare offers with the SAME line value."""
-    # (line_value, side_name) -> [(book_key, book_title, price, point)]
-    by_line_side: dict[tuple[float, str], list[tuple[str, str, float, float | None]]] = defaultdict(list)
+def _best_per_team_point(
+    event: Event, market_key: str
+) -> dict[tuple[str, float], tuple[str, str, float]]:
+    """For a given market, find the best (highest) decimal price per
+    (outcome_name, point) combination across every book in the event.
+
+    Returns: {(name, point): (book_key, book_title, price)}
+    """
+    best: dict[tuple[str, float], tuple[str, str, float]] = {}
     for bm in event.markets:
         if bm.market_key != market_key:
             continue
         for o in bm.outcomes:
             if o.point is None:
                 continue
-            by_line_side[(o.point, o.name)].append((bm.book_key, bm.book_title, o.price, o.point))
+            key = (o.name, o.point)
+            existing = best.get(key)
+            if existing is None or o.price > existing[2]:
+                best[key] = (bm.book_key, bm.book_title, o.price)
+    return best
 
-    # Group by line value: each value has multiple sides
-    lines: dict[float, dict[str, list]] = defaultdict(lambda: defaultdict(list))
-    for (line, side), offers in by_line_side.items():
-        # For spreads, the OTHER side has the inverse line. Group by absolute line.
-        # For totals, Over X.5 pairs with Under X.5 (same line).
-        if market_key == "spreads":
-            key_line = abs(line)  # collapse +3.5/-3.5 to single group of 3.5
-        else:
-            key_line = line
-        lines[key_line][side].extend(offers)
 
+def _build_arb(
+    event: Event,
+    market_key: str,
+    sides: list[tuple[str, str, str, float, float]],
+    bankroll: float,
+    min_profit_pct: float,
+) -> Arb | None:
+    if len({s[1] for s in sides}) < len(sides):
+        return None  # legs must be from different books
+    sides_for_check: list[tuple[str, str, str, float, float | None]] = [
+        (n, bk, bt, p, pt) for (n, bk, bt, p, pt) in sides
+    ]
+    result = _check_arb(sides_for_check, bankroll, min_profit_pct)
+    if result is None:
+        return None
+    profit_pct, profit, stakes = result
+    legs = [
+        ArbLeg(book_key=bk, book_title=bt, outcome_name=name, decimal_odds=price, point=pt, stake=st)
+        for (name, bk, bt, price, pt), st in zip(sides, stakes)
+    ]
+    return Arb(
+        event=event,
+        market_key=market_key,
+        legs=legs,
+        profit_pct=profit_pct,
+        profit_usd=profit,
+        total_stake=bankroll,
+    )
+
+
+def _find_spread_arbs(event: Event, bankroll: float, min_profit_pct: float) -> list[Arb]:
+    """For each unique spread magnitude L, pair home_team at -L with away_team at +L
+    (and the reverse). The two legs MUST be opposite sides of the SAME line:
+    one wins iff the margin exceeds L, the other wins iff it doesn't.
+    """
+    best = _best_per_team_point(event, "spreads")
     arbs: list[Arb] = []
-    for line_val, sides in lines.items():
-        if len(sides) < 2:
-            continue
-        # Best per side
-        best_per_side: list[tuple[str, str, str, float, float | None]] = []
-        for side_name, options in sides.items():
-            book_key, book_title, price, point = max(options, key=lambda x: x[2])
-            best_per_side.append((side_name, book_key, book_title, price, point))
+    seen_pairings: set[tuple] = set()
 
-        if len({s[1] for s in best_per_side}) < len(best_per_side):
-            continue
+    magnitudes = {abs(point) for (_, point) in best.keys() if point != 0}
+    for L in magnitudes:
+        for home_sign in (-1, 1):
+            home_pt = home_sign * L
+            away_pt = -home_sign * L
+            home_key = (event.home_team, home_pt)
+            away_key = (event.away_team, away_pt)
+            if home_key not in best or away_key not in best:
+                continue
+            hbk, hbt, hp = best[home_key]
+            abk, abt, ap = best[away_key]
 
-        result = _check_arb(best_per_side, bankroll, min_profit_pct)
-        if result is None:
+            sig = tuple(sorted(((hbk, event.home_team, home_pt, hp), (abk, event.away_team, away_pt, ap))))
+            if sig in seen_pairings:
+                continue
+            seen_pairings.add(sig)
+
+            sides = [
+                (event.home_team, hbk, hbt, hp, home_pt),
+                (event.away_team, abk, abt, ap, away_pt),
+            ]
+            arb = _build_arb(event, "spreads", sides, bankroll, min_profit_pct)
+            if arb is not None:
+                arbs.append(arb)
+    return arbs
+
+
+def _find_totals_arbs(event: Event, bankroll: float, min_profit_pct: float) -> list[Arb]:
+    """For each total line value L, pair Over @ L with Under @ L."""
+    best = _best_per_team_point(event, "totals")
+    arbs: list[Arb] = []
+    line_values = {point for (_, point) in best.keys()}
+    for L in line_values:
+        over_key = ("Over", L)
+        under_key = ("Under", L)
+        if over_key not in best or under_key not in best:
             continue
-        profit_pct, profit, stakes = result
-        legs = [
-            ArbLeg(book_key=bk, book_title=bt, outcome_name=name, decimal_odds=price, point=pt, stake=st)
-            for (name, bk, bt, price, pt), st in zip(best_per_side, stakes)
+        obk, obt, op = best[over_key]
+        ubk, ubt, up = best[under_key]
+        sides = [
+            ("Over", obk, obt, op, L),
+            ("Under", ubk, ubt, up, L),
         ]
-        arbs.append(Arb(event=event, market_key=market_key, legs=legs, profit_pct=profit_pct, profit_usd=profit, total_stake=bankroll))
-
+        arb = _build_arb(event, "totals", sides, bankroll, min_profit_pct)
+        if arb is not None:
+            arbs.append(arb)
     return arbs
 
 
@@ -172,7 +228,7 @@ def find_arbs(events: list[Event], bankroll: float, min_profit_pct: float) -> li
     arbs: list[Arb] = []
     for ev in events:
         arbs.extend(_find_h2h_arbs(ev, bankroll, min_profit_pct))
-        arbs.extend(_find_line_market_arbs(ev, "spreads", bankroll, min_profit_pct))
-        arbs.extend(_find_line_market_arbs(ev, "totals", bankroll, min_profit_pct))
+        arbs.extend(_find_spread_arbs(ev, bankroll, min_profit_pct))
+        arbs.extend(_find_totals_arbs(ev, bankroll, min_profit_pct))
     arbs.sort(key=lambda a: a.profit_pct, reverse=True)
     return arbs
