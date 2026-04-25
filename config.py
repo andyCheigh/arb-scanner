@@ -78,7 +78,13 @@ def load() -> Config:
         ),
         books=_csv(
             "BOOKS",
-            "draftkings,fanduel,betmgm,caesars,betrivers,espnbet,williamhill_us,pinnacle",
+            # Sharp / major US: draftkings, fanduel, betmgm, caesars, betrivers,
+            #                   espnbet, williamhill_us, pinnacle (sharp reference)
+            # Soft / offshore (typically the +EV leg of arbs):
+            #                   bovada, betus, mybookieag, lowvig, betonlineag,
+            #                   hardrockbet, fanatics, fliff
+            "draftkings,fanduel,betmgm,caesars,betrivers,espnbet,williamhill_us,pinnacle,"
+            "bovada,betus,mybookieag,lowvig,betonlineag,hardrockbet,fanatics,fliff",
         ),
         scan_window_start_hour=int(os.getenv("SCAN_WINDOW_START_HOUR", "9")),
         scan_window_end_hour=int(os.getenv("SCAN_WINDOW_END_HOUR", "23")),
